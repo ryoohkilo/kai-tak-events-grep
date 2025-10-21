@@ -1,9 +1,8 @@
 import requests
 import json
 
-# The direct API endpoint the website uses to get event data.
-# This is more reliable than trying to find the URL dynamically.
-API_URL = "https://prod-api.kaitaksportspark.com.hk/graphql"
+# The NEW, correct API endpoint the website now uses.
+API_URL = "https://cms.kaitaksportspark.com.hk/graphql"
 
 # The base URL to construct full event links
 BASE_URL = "https://www.kaitaksportspark.com.hk"
