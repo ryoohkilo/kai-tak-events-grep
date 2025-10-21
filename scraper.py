@@ -1,86 +1,78 @@
-import requests
 import json
+from playwright.sync_api import sync_playwright
 
-# The NEW, correct API endpoint the website now uses.
-API_URL = "https://cms.kaitaksportspark.com.hk/graphql"
-
-# The base URL to construct full event links
+# The public URL for the events page. This is stable and unlikely to change.
+EVENTS_PAGE_URL = "https://www.kaitaksportspark.com.hk/tc/event"
 BASE_URL = "https://www.kaitaksportspark.com.hk"
 
-# This is the specific "query" the website sends to the API to ask for the event list.
-GRAPHQL_QUERY = {
-    "operationName": "GetEvents",
-    "variables": {
-        "language": "tc",
-        "limit": 100,  # Get up to 100 events
-        "offset": 0
-    },
-    "query": """
-        query GetEvents($language: String, $limit: Int, $offset: Int) {
-          events(language: $language, limit: $limit, offset: $offset) {
-            items {
-              id
-              title
-              slug
-              eventDate
-              eventTime
-              venue
-              category {
-                id
-                title
-                slug
-              }
-            }
-          }
-        }
-    """
-}
-
-print("Fetching event data from the official API...")
+print("Starting browser-based scraping with Playwright...")
 
 try:
-    # Make a POST request to the GraphQL API with our query
-    response = requests.post(API_URL, json=GRAPHQL_QUERY, timeout=15)
-    
-    # This will raise an error if the request failed (e.g., 404, 500)
-    response.raise_for_status()
-    
-    # Parse the JSON response from the API
-    data = response.json()
-    
-    # The events are nested inside the JSON structure
-    event_items = data.get("data", {}).get("events", {}).get("items", [])
-    
-    if not event_items:
-        print("API returned a successful response, but no events were found.")
-    else:
-        print(f"Successfully found {len(event_items)} events.")
-        
-        # Format the events into the structure our dashboard expects
-        formatted_events = []
-        for item in event_items:
-            # Construct the full link to the event page
-            full_link = f"{BASE_URL}/tc/event/{item.get('slug', '')}"
-            
-            # Map the API data to the keys our frontend uses (e.g., '日期' for date)
-            formatted_event = {
-                "title": item.get("title"),
-                "link": full_link,
-                "日期": item.get("eventDate"),
-                "時間": item.get("eventTime"),
-                "地點": item.get("venue"),
-                # Get the category title, default to "General" if not available
-                "類別": item.get("category", {}).get("title") if item.get("category") else "一般活動"
-            }
-            formatted_events.append(formatted_event)
-            
-        # Save the detailed events to total_events.json
-        with open("total_events.json", "w", encoding="utf-8") as f:
-            json.dump(formatted_events, f, ensure_ascii=False, indent=2)
-        print("Saved detailed event data to total_events.json")
+    with sync_playwright() as p:
+        # Launch a headless Chromium browser.
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
 
-except requests.exceptions.RequestException as e:
-    print(f"An error occurred while fetching data from the API: {e}")
-except json.JSONDecodeError:
-    print("Failed to parse the JSON response from the API. The API might be down or has changed.")
+        print(f"Navigating to {EVENTS_PAGE_URL}...")
+        page.goto(EVENTS_PAGE_URL, wait_until="networkidle", timeout=60000)
+
+        # This is the crucial step: Wait for the event cards to be rendered by JavaScript.
+        # We target a class name that is specific to the event list items.
+        event_list_selector = "a.w-full"
+        print(f"Waiting for event list selector '{event_list_selector}' to appear...")
+        page.wait_for_selector(event_list_selector, timeout=30000)
+        print("Event list has loaded.")
+
+        # Find all the event card elements.
+        event_elements = page.query_selector_all(event_list_selector)
+        
+        if not event_elements:
+            print("No event elements found on the page.")
+            browser.close()
+            exit()
+            
+        print(f"Found {len(event_elements)} event elements. Extracting data...")
+        
+        formatted_events = []
+        for element in event_elements:
+            try:
+                # Extract data directly from the visible HTML content.
+                title = element.query_selector("h3").inner_text()
+                link = element.get_attribute("href")
+                
+                # The details (date, time, venue, category) are in p tags.
+                details = element.query_selector_all("p")
+                
+                event_date = details[0].inner_text() if len(details) > 0 else "日期未定"
+                event_time = details[1].inner_text() if len(details) > 1 else "時間未定"
+                venue = details[2].inner_text() if len(details) > 2 else "地點未定"
+                category = element.query_selector("div[class*='-tag']").inner_text() if element.query_selector("div[class*='-tag']") else "一般活動"
+                
+                full_link = BASE_URL + link if link.startswith('/') else link
+
+                formatted_event = {
+                    "title": title,
+                    "link": full_link,
+                    "日期": event_date,
+                    "時間": event_time,
+                    "地點": venue,
+                    "類別": category
+                }
+                formatted_events.append(formatted_event)
+
+            except Exception as e:
+                print(f"Could not parse an event card. Error: {e}")
+
+        browser.close()
+
+        if not formatted_events:
+            print("Could not extract any valid event data, though elements were found.")
+        else:
+            # Save the detailed events to total_events.json
+            with open("total_events.json", "w", encoding="utf-8") as f:
+                json.dump(formatted_events, f, ensure_ascii=False, indent=2)
+            print(f"Scraping complete. Saved {len(formatted_events)} events to total_events.json")
+
+except Exception as e:
+    print(f"An error occurred during the browser automation process: {e}")
 
