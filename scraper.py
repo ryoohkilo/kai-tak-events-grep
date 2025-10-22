@@ -1,6 +1,5 @@
 import json
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
-import re
 
 # The public URL for the events page.
 EVENTS_PAGE_URL = "https://www.kaitaksportspark.com.hk/tc/event"
@@ -27,11 +26,10 @@ try:
             except PlaywrightTimeoutError:
                 print("No cookie banner found or it timed out. Continuing...")
             
-            # --- Scroll down to trigger lazy loading ---
-            print("Scrolling down the page to load all events...")
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            # Wait for the network to be idle to ensure all content is loaded
             page.wait_for_load_state("networkidle", timeout=30000)
 
+            # A more robust selector targeting the event cards
             event_list_selector = "a[href*='/tc/event/']"
             print(f"Waiting for event list selector '{event_list_selector}' to appear...")
             page.wait_for_selector(event_list_selector, timeout=60000)
@@ -42,40 +40,27 @@ try:
             if not event_elements:
                 raise Exception("No event elements found on the page after loading.")
                 
-            print(f"Found {len(event_elements)} event elements. Extracting data...")
+            print(f"Found {len(event_elements)} potential event links. Filtering and extracting data...")
             
             formatted_events = []
             for element in event_elements:
-                link = ""
                 try:
-                    title = element.query_selector("h3").inner_text().strip()
+                    # --- The Definitive Fix ---
+                    # First, check if there is a title. If not, it's not a real event card.
+                    title_element = element.query_selector("h3")
+                    if not title_element:
+                        # This link doesn't have a title, so we safely skip it.
+                        continue
+
+                    title = title_element.inner_text().strip()
                     link = element.get_attribute("href")
                     
-                    # --- MORE ROBUST DETAIL EXTRACTION ---
-                    details_p = element.query_selector_all("p")
+                    # Now that we know it's a real event, extract other details safely.
+                    details = element.query_selector_all("p")
+                    event_date = details[0].inner_text().strip() if len(details) > 0 else "日期未定"
+                    event_time = details[1].inner_text().strip() if len(details) > 1 else "時間未定"
+                    venue = details[2].inner_text().strip() if len(details) > 2 else "地點未定"
                     
-                    event_date = "日期未定"
-                    event_time = "時間未定"
-                    venue = "地點未定"
-                    
-                    unmatched_details = []
-
-                    for p_element in details_p:
-                        text = p_element.inner_text().strip()
-                        if not text: continue
-
-                        # Positively identify date and time
-                        if '年' in text or '月' in text or '日' in text:
-                            event_date = text
-                        elif ':' in text or '午' in text:
-                            event_time = text
-                        else:
-                            unmatched_details.append(text)
-                    
-                    # Assume the first remaining item is the venue
-                    if unmatched_details:
-                        venue = unmatched_details[0]
-
                     category_element = element.query_selector("div[class*='-tag']")
                     category = category_element.inner_text().strip() if category_element else "一般活動"
                     
@@ -92,14 +77,15 @@ try:
                     formatted_events.append(formatted_event)
 
                 except Exception as e:
-                    print(f"Could not parse an event card for link {link}. Error: {e}")
+                    # This will now only catch truly unexpected errors.
+                    print(f"Could not parse a potential event card. Error: {e}")
 
             if not formatted_events:
                 raise Exception("Could not extract any valid event data.")
             else:
                 with open("total_events.json", "w", encoding="utf-8") as f:
                     json.dump(formatted_events, f, ensure_ascii=False, indent=2)
-                print(f"Scraping complete. Saved {len(formatted_events)} events to total_events.json")
+                print(f"Scraping complete. Saved {len(formatted_events)} valid events to total_events.json")
 
         except Exception as e:
             print(f"An error occurred. Saving a screenshot to debug_screenshot.png")
