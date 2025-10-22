@@ -1,5 +1,6 @@
 import json
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+import re
 
 # The public URL for the events page.
 EVENTS_PAGE_URL = "https://www.kaitaksportspark.com.hk/tc/event"
@@ -26,20 +27,17 @@ try:
             except PlaywrightTimeoutError:
                 print("No cookie banner found or it timed out. Continuing...")
             
-            # --- NEW: Scroll down to trigger lazy loading ---
+            # --- Scroll down to trigger lazy loading ---
             print("Scrolling down the page to load all events...")
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            # Wait for any network activity to settle after scrolling
             page.wait_for_load_state("networkidle", timeout=30000)
 
-            # A more robust selector targeting the event cards
-            event_list_selector = "a[href*='/tc/event/'] h3"
+            event_list_selector = "a[href*='/tc/event/']"
             print(f"Waiting for event list selector '{event_list_selector}' to appear...")
             page.wait_for_selector(event_list_selector, timeout=60000)
             print("Event list has loaded.")
 
-            # Select the parent 'a' tags of the headers we found
-            event_elements = page.query_selector_all("a[href*='/tc/event/']:has(h3)")
+            event_elements = page.query_selector_all(event_list_selector)
             
             if not event_elements:
                 raise Exception("No event elements found on the page after loading.")
@@ -48,13 +46,32 @@ try:
             
             formatted_events = []
             for element in event_elements:
+                link = ""
                 try:
-                    title = element.query_selector("h3").inner_text()
+                    title = element.query_selector("h3").inner_text().strip()
                     link = element.get_attribute("href")
-                    details = element.query_selector_all("p")
                     
-                    event_date = details[0].inner_text() if len(details) > 0 else "日期未定"
-                    venue = details[2].inner_text() if len(details) > 2 else "地點未定"
+                    # --- NEW: Intelligent Detail Extraction ---
+                    # Find all detail paragraphs
+                    details_p = element.query_selector_all("p")
+                    
+                    event_date = "日期未定"
+                    event_time = "時間未定"
+                    venue = "地點未定"
+
+                    # Instead of assuming order, we check the content
+                    for p_element in details_p:
+                        text = p_element.inner_text().strip()
+                        # This is a simple way to guess the content type
+                        if '年' in text or '月' in text or '日' in text:
+                            event_date = text
+                        elif ':' in text or '午' in text:
+                            event_time = text
+                        else: # Assume the remaining one is the venue
+                            venue = text
+
+                    category_element = element.query_selector("div[class*='-tag']")
+                    category = category_element.inner_text().strip() if category_element else "一般活動"
                     
                     full_link = BASE_URL + link if link and link.startswith('/') else link
 
@@ -62,12 +79,14 @@ try:
                         "title": title,
                         "link": full_link,
                         "日期": event_date,
+                        "時間": event_time,
                         "地點": venue,
+                        "類別": category
                     }
                     formatted_events.append(formatted_event)
 
                 except Exception as e:
-                    print(f"Could not parse an event card. Error: {e}")
+                    print(f"Could not parse an event card for link {link}. Error: {e}")
 
             if not formatted_events:
                 raise Exception("Could not extract any valid event data.")
@@ -77,10 +96,8 @@ try:
                 print(f"Scraping complete. Saved {len(formatted_events)} events to total_events.json")
 
         except Exception as e:
-            # --- NEW: Screenshot on Failure ---
             print(f"An error occurred. Saving a screenshot to debug_screenshot.png")
             page.screenshot(path="debug_screenshot.png", full_page=True)
-            # Re-raise the exception to ensure the workflow fails correctly
             raise e
 
         finally:
@@ -88,6 +105,5 @@ try:
 
 except Exception as e:
     print(f"An error occurred during the browser automation process: {e}")
-    # Exit with a non-zero status code to make sure GitHub Actions marks this as a failure.
     exit(1)
 
