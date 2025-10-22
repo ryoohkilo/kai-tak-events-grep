@@ -2,7 +2,7 @@
 
 // Helper function to parse various Chinese date formats
 function parseChineseDate(dateStr) {
-  if (!dateStr || typeof dateStr !== 'string' || dateStr === "日期未定") return null;
+  if (!dateStr || typeof dateStr !== 'string' || dateStr.includes("待定")) return null;
 
   let year, month, startDay, endDay;
   
