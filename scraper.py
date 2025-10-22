@@ -51,24 +51,30 @@ try:
                     title = element.query_selector("h3").inner_text().strip()
                     link = element.get_attribute("href")
                     
-                    # --- NEW: Intelligent Detail Extraction ---
-                    # Find all detail paragraphs
+                    # --- MORE ROBUST DETAIL EXTRACTION ---
                     details_p = element.query_selector_all("p")
                     
                     event_date = "日期未定"
                     event_time = "時間未定"
                     venue = "地點未定"
+                    
+                    unmatched_details = []
 
-                    # Instead of assuming order, we check the content
                     for p_element in details_p:
                         text = p_element.inner_text().strip()
-                        # This is a simple way to guess the content type
+                        if not text: continue
+
+                        # Positively identify date and time
                         if '年' in text or '月' in text or '日' in text:
                             event_date = text
                         elif ':' in text or '午' in text:
                             event_time = text
-                        else: # Assume the remaining one is the venue
-                            venue = text
+                        else:
+                            unmatched_details.append(text)
+                    
+                    # Assume the first remaining item is the venue
+                    if unmatched_details:
+                        venue = unmatched_details[0]
 
                     category_element = element.query_selector("div[class*='-tag']")
                     category = category_element.inner_text().strip() if category_element else "一般活動"
